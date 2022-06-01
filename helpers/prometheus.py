@@ -47,6 +47,7 @@ class SentryCollector(object):
         sentry_api,
         sentry_org_slug,
         metric_scraping_config,
+        sentry_envs,
         sentry_projects_slug=None,
     ):
         """Inits SentryCollector with a SentryAPI object"""
@@ -60,6 +61,7 @@ class SentryCollector(object):
         self.get_1h_metrics = metric_scraping_config[3]
         self.get_24h_metrics = metric_scraping_config[4]
         self.get_14d_metrics = metric_scraping_config[5]
+        self.sentry_envs = sentry_envs
 
     def __build_sentry_data_from_api(self):
         """Build a local data structure from sentry API calls.
@@ -134,6 +136,10 @@ class SentryCollector(object):
             log.info(
                 "metadata: projects loaded from API: {num_proj}".format(num_proj=len(projects))
             )
+
+        if self.sentry_envs != "" :
+            projects_envs[project.get("slug")] = self.sentry_envs.split(",") 
+            log.info("envs has been overriden by : {envs}".format(envs=projects_envs[project.get("slug")]))
 
         log.debug("metadata: building projects metadata structure")
         data = {
@@ -285,12 +291,15 @@ class SentryCollector(object):
             yield issues_histogram_metrics
 
             issues_metrics = GaugeMetricFamily(
-                "sentry_open_issue_events",
-                "Number of open issues (aka is:unresolved) per project",
+                "sentry_open_issue_events_1h",
+                "Number of open issues (aka is:unresolved) per project during the last hour",
                 labels=[
                     "issue_id",
+                    "shortId",
+                    "title",
                     "logger",
                     "level",
+                    "type",
                     "status",
                     "platform",
                     "project_slug",
@@ -312,8 +321,169 @@ class SentryCollector(object):
                         issues_metrics.add_metric(
                             [
                                 str(issue.get("id")),
+                                str(issue.get("shortId")),
+                                str(issue.get("title")),
                                 str(issue.get("logger")) or "None",
                                 str(issue.get("level")),
+                                str(issue.get("type")),
+                                str(issue.get("status")),
+                                str(issue.get("platform")),
+                                str(issue.get("project").get("slug")),
+                                str(env),
+                                str(release),
+                                str(issue.get("isUnhandled")),
+                                str(
+                                    datetime.strftime(
+                                        datetime.strptime(
+                                            str(
+                                                issue.get("firstSeen")
+                                                # if the issue age is recent, firstSeen returns None
+                                                # and we'll return datetime.now() as default
+                                                or datetime.strftime(
+                                                    datetime.now(), "%Y-%m-%dT%H:%M:%SZ"
+                                                )
+                                            ),
+                                            "%Y-%m-%dT%H:%M:%SZ",
+                                        ),
+                                        "%Y-%m-%d",
+                                    )
+                                ),
+                                str(
+                                    datetime.strftime(
+                                        datetime.strptime(
+                                            str(
+                                                issue.get("lastSeen")
+                                                # if the issue age is recent, lastSeen returns None
+                                                # and we'll return datetime.now() as default
+                                                or datetime.strftime(
+                                                    datetime.now(), "%Y-%m-%dT%H:%M:%SZ"
+                                                )
+                                            ),
+                                            "%Y-%m-%dT%H:%M:%SZ",
+                                        ),
+                                        "%Y-%m-%d",
+                                    )
+                                ),
+                            ],
+                            int(issue.get("count")),
+                        )
+            yield issues_metrics
+
+            issues_metrics = GaugeMetricFamily(
+                "sentry_open_issue_events_24h",
+                "Number of open issues (aka is:unresolved) per project during the last day",
+                labels=[
+                    "issue_id",
+                    "shortId",
+                    "title",
+                    "logger",
+                    "level",
+                    "type",
+                    "status",
+                    "platform",
+                    "project_slug",
+                    "environment",
+                    "release",
+                    "isUnhandled",
+                    "firstSeen",
+                    "lastSeen",
+                ],
+            )
+
+            for project in __metadata.get("projects"):
+                envs = __metadata.get("projects_envs").get(project.get("slug"))
+                project_issues = __projects_data.get(project.get("slug"))
+                for env in envs:
+                    project_issues_24h = project_issues.get(env).get("24h")
+                    for issue in project_issues_24h:
+                        release = self.__sentry_api.issue_release(issue.get("id"), env)
+                        issues_metrics.add_metric(
+                            [
+                                str(issue.get("id")),
+                                str(issue.get("shortId")),
+                                str(issue.get("title")),
+                                str(issue.get("logger")) or "None",
+                                str(issue.get("level")),
+                                str(issue.get("type")),
+                                str(issue.get("status")),
+                                str(issue.get("platform")),
+                                str(issue.get("project").get("slug")),
+                                str(env),
+                                str(release),
+                                str(issue.get("isUnhandled")),
+                                str(
+                                    datetime.strftime(
+                                        datetime.strptime(
+                                            str(
+                                                issue.get("firstSeen")
+                                                # if the issue age is recent, firstSeen returns None
+                                                # and we'll return datetime.now() as default
+                                                or datetime.strftime(
+                                                    datetime.now(), "%Y-%m-%dT%H:%M:%SZ"
+                                                )
+                                            ),
+                                            "%Y-%m-%dT%H:%M:%SZ",
+                                        ),
+                                        "%Y-%m-%d",
+                                    )
+                                ),
+                                str(
+                                    datetime.strftime(
+                                        datetime.strptime(
+                                            str(
+                                                issue.get("lastSeen")
+                                                # if the issue age is recent, lastSeen returns None
+                                                # and we'll return datetime.now() as default
+                                                or datetime.strftime(
+                                                    datetime.now(), "%Y-%m-%dT%H:%M:%SZ"
+                                                )
+                                            ),
+                                            "%Y-%m-%dT%H:%M:%SZ",
+                                        ),
+                                        "%Y-%m-%d",
+                                    )
+                                ),
+                            ],
+                            int(issue.get("count")),
+                        )
+            yield issues_metrics
+
+            issues_metrics = GaugeMetricFamily(
+                "sentry_open_issue_events_14d",
+                "Number of open issues (aka is:unresolved) per project during the last 14 days",
+                labels=[
+                    "issue_id",
+                    "shortId",
+                    "title",
+                    "logger",
+                    "level",
+                    "type",
+                    "status",
+                    "platform",
+                    "project_slug",
+                    "environment",
+                    "release",
+                    "isUnhandled",
+                    "firstSeen",
+                    "lastSeen",
+                ],
+            )
+
+            for project in __metadata.get("projects"):
+                envs = __metadata.get("projects_envs").get(project.get("slug"))
+                project_issues = __projects_data.get(project.get("slug"))
+                for env in envs:
+                    project_issues_14d = project_issues.get(env).get("14d")
+                    for issue in project_issues_14d:
+                        release = self.__sentry_api.issue_release(issue.get("id"), env)
+                        issues_metrics.add_metric(
+                            [
+                                str(issue.get("id")),
+                                str(issue.get("shortId")),
+                                str(issue.get("title")),
+                                str(issue.get("logger")) or "None",
+                                str(issue.get("level")),
+                                str(issue.get("type")),
                                 str(issue.get("status")),
                                 str(issue.get("platform")),
                                 str(issue.get("project").get("slug")),
